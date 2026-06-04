@@ -2318,6 +2318,8 @@ class ModuleInterface:
                 artist=album_artist,
                 album_artist=album_artist,
                 artist_id=str(artist_id) if artist_id else None,
+                id=str(album_id),
+                quality=self._album_quality_label_from_attrs(attrs),
                 cover_url=cover_url,
                 release_year=release_year,
                 label=record_label,
@@ -2656,6 +2658,18 @@ class ModuleInterface:
             
         # Replace template markers with resolution
         return artwork_template.replace('{w}', str(res)).replace('{h}', str(res))
+
+    def _album_quality_label_from_attrs(self, attrs) -> Optional[str]:
+        """Short quality label for album folder names (discography disambiguation)."""
+        traits = attrs.get('audioTraits') or []
+        labels = []
+        if any(t in traits for t in ('atmos', 'spatial')):
+            labels.append('Atmos')
+        if 'hi-res-lossless' in traits:
+            labels.append('HI-RES')
+        elif 'lossless' in traits:
+            labels.append('Lossless')
+        return ' · '.join(labels) if labels else None
 
     def _format_audio_traits(self, attrs, item_type=None):
         """Format audio traits according to GUI display rules"""
