@@ -275,7 +275,13 @@ SyncedLyricsFormat = None
 RemuxFormatMusicVideo = None
 
 from utils.models import *
-from utils.utils import create_temp_filename, download_to_temp, get_primary_artist
+from utils.utils import (
+    artists_from_apple_attrs,
+    create_temp_filename,
+    download_to_temp,
+    format_album_artist_tag,
+    resolve_album_artist_tag,
+)
 
 from utils.models import (
     TrackInfo, AlbumInfo, ArtistInfo, PlaylistInfo, LyricsInfo, 
@@ -948,7 +954,7 @@ class ModuleInterface:
                     if query_type == DownloadTypeEnum.artist:
                         artists = [attrs.get('name', '')]
                     elif 'artistName' in attrs:
-                        artists = [attrs['artistName']]
+                        artists = artists_from_apple_attrs(attrs)
                     elif 'curatorName' in attrs:  # For playlists
                         artists = [attrs['curatorName']]
                     
@@ -1547,8 +1553,7 @@ class ModuleInterface:
             # --- Final Consolidated Metadata Extraction ---
             name = attrs.get('name', 'Unknown Track')
             album_name = attrs.get('albumName', 'Unknown Album')
-            artist_name = attrs.get('artistName', 'Unknown Artist')
-            artists_list = [artist_name] if artist_name else ["Unknown Artist"]
+            artists_list = artists_from_apple_attrs(attrs)
             
             duration_ms = attrs.get('durationInMillis')
             duration_sec = duration_ms // 1000 if duration_ms is not None else 0
@@ -1611,9 +1616,6 @@ class ModuleInterface:
                     display_bit_depth = 16
                     display_sample_rate = 44100
 
-            # Determine the primary album artist name.
-            album_artist = get_primary_artist(attrs.get('albumArtistName', artist_name))
-
             # Extract record label and copyright from song attributes
             record_label = attrs.get('recordLabel')
             copyright_info = attrs.get('copyright')
@@ -1623,6 +1625,14 @@ class ModuleInterface:
             rels = track_api_data.get('relationships', {})
             albums_rel = rels.get('albums', {}).get('data', [])
             album_attrs = albums_rel[0].get('attributes', {}) if albums_rel else {}
+
+            # Album artist: prefer album-level context so every track shares one value.
+            album_artist = resolve_album_artist_tag(
+                kwargs.get('album_artist'),
+                attrs.get('albumArtistName'),
+                album_attrs.get('artistName') if album_attrs else None,
+                attrs.get('artistName'),
+            ) or (artists_list[0] if artists_list else 'Unknown Artist')
             
             if not record_label or not copyright_info:
                 if not record_label: record_label = album_attrs.get('recordLabel')
@@ -2219,7 +2229,9 @@ class ModuleInterface:
             if 'url' in attrs:
                 attrs['url'] = self._localize_url(attrs['url'])
                 
-            album_artist = attrs.get('artistName', '')
+            album_artist = format_album_artist_tag(
+                attrs.get('albumArtistName') or attrs.get('artistName', '')
+            )
             cover_url = self._get_cover_url(attrs.get('artwork', {}).get('url'))
             album_release_date = attrs.get('releaseDate')
             release_year = self._extract_year(album_release_date)
@@ -2257,8 +2269,11 @@ class ModuleInterface:
                     name = t_attrs.get('name') or f'Track {idx}'
                     dur_ms = t_attrs.get('durationInMillis')
                     duration_sec = (dur_ms // 1000) if isinstance(dur_ms, (int, float)) else None
-                    artist = t_attrs.get('artistName') or album_artist # Use track artist if available, else album artist
-                    
+                    track_artist_attrs = dict(t_attrs)
+                    if not track_artist_attrs.get('artistName'):
+                        track_artist_attrs['artistName'] = album_artist
+                    track_artists = artists_from_apple_attrs(track_artist_attrs)
+
                     additional = self._format_audio_traits(t_attrs, item_type='songs')
 
                     # Extract preview URL (Apple Music provides 30-second previews)
@@ -2279,7 +2294,7 @@ class ModuleInterface:
                         'id': track.get('id', ''),
                         'name': name,
                         'duration': duration_sec,
-                        'artists': [artist],
+                        'artists': track_artists,
                         'release_year': release_year,
                         'cover_url': self._get_cover_url(t_attrs.get('artwork', {}).get('url')) or cover_url,
                         'preview_url': preview_url,
@@ -2301,6 +2316,7 @@ class ModuleInterface:
             return AlbumInfo(
                 name=attrs['name'],
                 artist=album_artist,
+                album_artist=album_artist,
                 artist_id=str(artist_id) if artist_id else None,
                 cover_url=cover_url,
                 release_year=release_year,
@@ -2308,7 +2324,12 @@ class ModuleInterface:
                 upc=upc,
                 tracks=tracks_out,
                 expected_track_count=int(attrs['trackCount']) if attrs.get('trackCount') is not None else None,
-                track_extra_kwargs={**kwargs, 'country': country, 'album_release_date': album_release_date}
+                track_extra_kwargs={
+                    **kwargs,
+                    'country': country,
+                    'album_release_date': album_release_date,
+                    'album_artist': album_artist,
+                },
             )
             
         except Exception as e:
@@ -2394,8 +2415,11 @@ class ModuleInterface:
                     name = t_attrs.get('name') or f'Track {idx}'
                     dur_ms = t_attrs.get('durationInMillis')
                     duration_sec = (dur_ms // 1000) if isinstance(dur_ms, (int, float)) else None
-                    artist = t_attrs.get('artistName') or creator
-                    
+                    track_artist_attrs = dict(t_attrs)
+                    if not track_artist_attrs.get('artistName'):
+                        track_artist_attrs['artistName'] = creator
+                    track_artists = artists_from_apple_attrs(track_artist_attrs)
+
                     additional = self._format_audio_traits(t_attrs, item_type='songs')
 
                     # Extract preview URL
@@ -2408,7 +2432,7 @@ class ModuleInterface:
                         'id': track.get('id', ''),
                         'name': name,
                         'duration': duration_sec,
-                        'artists': [artist],
+                        'artists': track_artists,
                         'release_year': release_year,
                         'cover_url': self._get_cover_url(t_attrs.get('artwork', {}).get('url')) or cover_url,
                         'preview_url': preview_url,
@@ -2468,7 +2492,7 @@ class ModuleInterface:
                 
                 name = a_attrs.get('name') or 'Unknown Album'
                 release_year = self._extract_year(a_attrs.get('releaseDate'))
-                album_artist = a_attrs.get('artistName') or artist_name
+                album_artist = format_album_artist_tag(a_attrs.get('artistName') or artist_name)
                 item_cover_url = self._get_cover_url(a_attrs.get('artwork', {}).get('url')) or cover_url_default
                 
                 additional_parts = []
@@ -2516,7 +2540,10 @@ class ModuleInterface:
                             s_attrs['url'] = self._localize_url(s_attrs['url'])
                         
                         s_name = s_attrs.get('name') or 'Unknown Track'
-                        s_artist = s_attrs.get('artistName') or artist_name
+                        s_artist_attrs = dict(s_attrs)
+                        if not s_artist_attrs.get('artistName'):
+                            s_artist_attrs['artistName'] = artist_name
+                        s_artists = artists_from_apple_attrs(s_artist_attrs)
                         dur_ms = s_attrs.get('durationInMillis')
                         s_duration_sec = (dur_ms // 1000) if isinstance(dur_ms, (int, float)) else 0
                         s_cover_url = self._get_cover_url(s_attrs.get('artwork', {}).get('url')) or cover_url_default
@@ -2526,7 +2553,7 @@ class ModuleInterface:
                         tracks_out.append({
                             'id': song_item.get('id', ''),
                             'name': s_name,
-                            'artists': [s_artist],
+                            'artists': s_artists,
                             'duration': s_duration_sec,
                             'release_year': self._extract_year(s_attrs.get('releaseDate')),
                             'cover_url': s_cover_url,
