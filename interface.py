@@ -318,6 +318,7 @@ module_information = ModuleInformation(
         'cookies_path': './config/cookies.txt',
         'language': 'en-US',
         'use_wrapper': False,
+        'wrapper_account_url': 'http://127.0.0.1',
         'wrapper_decrypt_ip': '127.0.0.1:10020',
         'wrapper_restart_command': ''
     },
@@ -450,11 +451,12 @@ class ModuleInterface:
             # Null out API clients and interfaces to force re-initialization in the new loop
             self.apple_music_api = None
             self.itunes_api = None
+            self.wrapper_api_instance = None
             self.gamdl_interface = None
             self.gamdl_song_interface = None
             self.gamdl_music_video_interface = None
             self.gamdl_uploaded_video_interface = None
-            
+
             self._wrapper_offline = False 
             
             if self._debug:
@@ -764,22 +766,10 @@ class ModuleInterface:
             try:
                 orpheus_temp_path = Path(self.settings.get("temp_path", tempfile.gettempdir()))
 
-                # Build WrapperApi if wrapper mode is enabled
-                wrapper_api = None
-                if requested_wrapper:
-                    try:
-                        import asyncio as _asyncio
-                        wrapper_account_url = self.settings.get('wrapper_account_url', 'http://127.0.0.1:20020')
-                        loop = self.loop
-                        if loop and not loop.is_closed():
-                            future = _asyncio.run_coroutine_threadsafe(
-                                WrapperApi.create(wrapper_account_url), loop
-                            )
-                            wrapper_api = future.result(timeout=10)
-                    except Exception as we:
-                        if self._debug:
-                            print(f"[Apple Music Debug] WrapperApi creation failed: {we}")
-                        wrapper_api = None
+                # Use the WrapperApi instance created in _setup_api_clients (async context).
+                # Creating it here via run_coroutine_threadsafe causes a deadlock because
+                # _initialize_gamdl_components is called from within the background loop.
+                wrapper_api = getattr(self, 'wrapper_api_instance', None) if requested_wrapper else None
 
                 # Base interface (holds API clients, CDM, cover settings)
                 cdm = AppleMusicBaseInterface.create_cdm()
@@ -1164,6 +1154,22 @@ class ModuleInterface:
                     self.account_storefront = sf
                     self.is_authenticated = self.apple_music_api.active_subscription
                 
+                # Create WrapperApi for FairPlay decryption (separate from AppleMusicApi)
+                # Must be done here (async context on the background loop) to avoid the
+                # run_coroutine_threadsafe deadlock that occurs when called from sync code.
+                if self.use_wrapper:
+                    wrapper_account_url = self.settings.get('wrapper_account_url', 'http://127.0.0.1')
+                    try:
+                        self.wrapper_api_instance = await WrapperApi.create(wrapper_account_url)
+                        if self._debug:
+                            print(f"[Apple Music Debug] WrapperApi created: {wrapper_account_url}")
+                    except Exception as we:
+                        self.wrapper_api_instance = None
+                        if self._debug:
+                            print(f"[Apple Music Debug] WrapperApi creation failed: {we}")
+                else:
+                    self.wrapper_api_instance = None
+
                 # Ensure other components are resolved
                 self._resolve_all_binary_paths()
                 self.song_codec = self._get_gamdl_codec(self.settings.get('codec', 'aac'))
