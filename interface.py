@@ -787,7 +787,7 @@ class ModuleInterface:
                     apple_music_api=self.apple_music_api,
                     itunes_api=self.itunes_api,
                     wrapper_api=wrapper_api,
-                    cover_format=CoverFormat.JPEG,
+                    cover_format=CoverFormat.JPG,
                     cover_size=1200,
                     cdm=cdm,
                 )
@@ -1155,8 +1155,13 @@ class ModuleInterface:
                         self.apple_music_api = await AppleMusicApi.create(**kwargs)
                 
                 if self.apple_music_api:
-                    self.itunes_api = ItunesApi(self.apple_music_api.storefront)
-                    self.account_storefront = self.apple_music_api.storefront
+                    sf = self.apple_music_api.storefront
+                    self.itunes_api = await ItunesApi.create(
+                        storefront=sf,
+                        language=getattr(self.apple_music_api, 'language', 'en-US'),
+                        **({"storefront_id": None} if sf.lower() != "us" else {}),
+                    )
+                    self.account_storefront = sf
                     self.is_authenticated = self.apple_music_api.active_subscription
                 
                 # Ensure other components are resolved
