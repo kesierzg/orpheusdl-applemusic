@@ -1335,6 +1335,10 @@ class ModuleInterface:
 
             self._set_storefront(country)
             
+            # Detect if data came from a playlist context (may have wrong artwork/trackNumber)
+            is_from_playlist = isinstance(data, dict) and data.get('_from_playlist', False)
+            skip_supplemental_refetch = False
+
             # Check if we have raw_result from search
             if 'raw_result' in kwargs and kwargs['raw_result']:
                 track_api_data = kwargs['raw_result']
@@ -1369,7 +1373,21 @@ class ModuleInterface:
                             print(f"[Apple Music Debug] API fetch failed for {sid}: {fe}")
                         return None
 
-                track_api_data = data if data and isinstance(data, dict) and data.get('id') == track_id and 'attributes' in data else self._run_async(lambda s: _fetch_with_logging(s, track_id), storefront=country)
+                if is_from_playlist and allow_refetch:
+                    # Playlist tracks: always fetch fresh catalog data so artwork/trackNumber/trackCount
+                    # reflect the track's own album, not the playlist context metadata from the API
+                    fresh_result = self._run_async(lambda s: _fetch_with_logging(s, track_id), storefront=country)
+                    if fresh_result:
+                        track_api_data = fresh_result
+                        skip_supplemental_refetch = True
+                    elif data and isinstance(data, dict) and data.get('id') == track_id and 'attributes' in data:
+                        track_api_data = data  # fall back to playlist data if fresh fetch fails
+                    else:
+                        track_api_data = None
+                elif data and isinstance(data, dict) and data.get('id') == track_id and 'attributes' in data:
+                    track_api_data = data
+                else:
+                    track_api_data = self._run_async(lambda s: _fetch_with_logging(s, track_id), storefront=country)
                 
                 # Check for Early ID Reconciliation: If the data (either provided or fetched) 
                 # already has a catalogId in its playParams, update track_id now!
@@ -1507,7 +1525,7 @@ class ModuleInterface:
             # Re-fetch full track data if needed (always use library-aware fetcher)
             album_id_from_rels = attrs.get('albumName') or (track_api_data.get('relationships', {}).get('albums', {}).get('data', [{}])[0].get('id'))
             artist_id_from_rels = attrs.get('artistName') or (track_api_data.get('relationships', {}).get('artists', {}).get('data', [{}])[0].get('id'))
-            if allow_refetch and (not album_id_from_rels or not artist_id_from_rels or 'hasLyrics' not in attrs or 'audioTraits' not in attrs or 'recordLabel' not in attrs or 'copyright' not in attrs or 'upc' not in attrs):
+            if not skip_supplemental_refetch and allow_refetch and (not album_id_from_rels or not artist_id_from_rels or 'hasLyrics' not in attrs or 'audioTraits' not in attrs or 'recordLabel' not in attrs or 'copyright' not in attrs or 'upc' not in attrs):
                 if self._debug:
                     print(f"[Apple Music Debug] Incomplete metadata (Album={album_id_from_rels}, Artist={artist_id_from_rels}, hasLyrics={'hasLyrics' in attrs}, audioTraits={'audioTraits' in attrs}) for track {track_id}. Fetching full song data.")
                 full_track_data = self._run_async(lambda s: _fetch_with_logging(s, track_id), storefront=country)
@@ -2438,11 +2456,14 @@ class ModuleInterface:
                         'release_year': release_year,
                         'cover_url': self._get_cover_url(t_attrs.get('artwork', {}).get('url')) or cover_url,
                         'preview_url': preview_url,
-                        # Pass full API data so get_track_info doesn't need to refetch
+                        # Pass full API data for GUI display; _from_playlist tells get_track_info
+                        # to always fetch fresh catalog data during download (playlist API may return
+                        # wrong artwork/trackNumber/trackCount in the playlist-context response)
                         'attributes': t_attrs,
                         'relationships': track.get('relationships') or {},
                         'type': track.get('type'),
-                        'additional': additional
+                        'additional': additional,
+                        '_from_playlist': True,
                     })
                 else:
                     tracks_out.append(track.get('id', ''))
