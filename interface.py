@@ -226,22 +226,22 @@ def _lazy_import_gamdl():
                     if self.quality_tier == QualityEnum.LOSSLESS:
                         filtered = []
                         for p in matching_playlists:
-                            audio_id = p["stream_info"]["audio"] 
+                            audio_id = p["stream_info"]["audio"]
                             try:
                                 parts = audio_id.split('-')
                                 if len(parts) >= 4:
                                     sample_rate = int(parts[-2])
-                                    if sample_rate <= 48000:
+                                    if sample_rate <= 44100:
                                         filtered.append(p)
                                 else:
                                     filtered.append(p)
                             except:
                                 filtered.append(p)
-                        
+
                         if filtered:
                             matching_playlists = filtered
                         elif self.quality_tier == QualityEnum.LOSSLESS:
-                            print(f"[Apple Music Debug] No playlists matched sample_rate <= 48000. Returning best available.")
+                            print(f"[Apple Music Debug] No playlists matched sample_rate <= 44100. Returning best available.")
 
                 return max(
                     matching_playlists,
@@ -1673,6 +1673,8 @@ class ModuleInterface:
                         # Fallback to trait-based inference if manifest fails
                         if 'hi-res-lossless' in traits and quality_tier != QualityEnum.LOSSLESS:
                             display_bit_depth, display_sample_rate = 24, 96000
+                        elif quality_tier == QualityEnum.LOSSLESS:
+                            display_bit_depth, display_sample_rate = 16, 44100
                         else:
                             display_bit_depth, display_sample_rate = 24, 48000
                 else:
@@ -2804,22 +2806,22 @@ class ModuleInterface:
                 if not matching_playlists:
                     return None
                 
-                # Filter for LOSSLESS (Standard Lossless) to avoid HI-RES (96k+) if requested
+                # Filter for LOSSLESS (Standard Lossless / CD quality) to avoid HI-RES if requested
                 if codec.value == "alac" and quality_tier == QualityEnum.LOSSLESS:
                     filtered = []
                     for p in matching_playlists:
-                        audio_id = p["stream_info"]["audio"] 
+                        audio_id = p["stream_info"]["audio"]
                         try:
                             parts = audio_id.split('-')
                             if len(parts) >= 4:
                                 sample_rate = int(parts[-2])
-                                if sample_rate <= 48000:
+                                if sample_rate <= 44100:
                                     filtered.append(p)
                             else:
                                 filtered.append(p)
                         except:
                             filtered.append(p)
-                    
+
                     if filtered:
                         matching_playlists = filtered
 
