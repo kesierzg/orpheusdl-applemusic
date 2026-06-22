@@ -2054,8 +2054,8 @@ class ModuleInterface:
                                 if self._debug:
                                     print(f"[Apple Music Warning] Could not play retry sound: {sound_e}")
                         
-                        print(f"{indent_spaces}Connection to the local decryption service (Wrapper) failed.")
-                        
+                        print(f"{indent_spaces}[Retry {attempt + 1}] Decryption service (Wrapper) unreachable for track {track_id}.")
+
                         # Attempt to restart the wrapper if a command is configured and it's the first retry
                         restart_command = self.settings.get('wrapper_restart_command')
                         if restart_command and not restarted_wrapper:
@@ -2069,8 +2069,8 @@ class ModuleInterface:
                                 await asyncio.sleep(5)
                             except Exception as restart_e:
                                 print(f"{indent_spaces}Wrapper restart command failed: {restart_e}")
-                        
-                        print(f"{indent_spaces}Waiting {retry_wait}s for restoration before retrying download...")
+
+                        print(f"{indent_spaces}Waiting {retry_wait}s before retry {attempt + 2}...")
                         await asyncio.sleep(retry_wait)
                         continue
                     
@@ -2078,6 +2078,8 @@ class ModuleInterface:
                         print(f"[Apple Music Error] gamdl download failed: {type(e).__name__}: {e}")
                     raise DownloadError(f"Apple Music: Download execution failed - {type(e).__name__}: {e}") from e
             
+            if attempt > 0:
+                print(f"{indent_spaces}[Retry succeeded] Downloaded track {track_id} on attempt {attempt + 1}.")
             return download_item
 
         try:
